@@ -1,4 +1,5 @@
-use headless_chrome::{Browser, LaunchOptionsBuilder, Tab};
+use headless_chrome::{Browser, Element, LaunchOptionsBuilder, Tab};
+use scraper::{Html, Selector};
 use std::{error::Error, sync::Arc, thread::sleep, time::Duration};
 use url::Url;
 
@@ -27,8 +28,7 @@ fn get_links(tab: &Arc<Tab>) -> Result<Vec<String>, Box<dyn Error>> {
     let mut links = Vec::new();
     let elements = tab.find_elements("body > div a")?;
     for element in elements {
-        let attributes = element.get_attributes()?;
-        let attributes = attributes.unwrap();
+        let attributes = element.get_attributes()?.expect("No attributes");
         let on_click = attributes.get("onclick").unwrap();
         let start = "window.open(\'".len();
         let end = on_click
@@ -49,6 +49,7 @@ struct Chapter {
 }
 
 enum MediaType {
+    Text(String),
     Image,
     Video,
     Audio,
@@ -59,12 +60,50 @@ enum MediaType {
 
 struct Exercise {
     content: Vec<MediaType>,
+    num_popups: usize,
+}
+
+struct Popup {
+    content: Vec<MediaType>,
 }
 
 fn process_tab(tab: &Arc<Tab>) -> Result<Chapter, Box<dyn Error>> {
-    let mut a = Chapter::default();
-    a.title = tab.get_title()?;
-    let items = tab.find_elements("#container div")?;
-    println!("{:?}", &items);
-    Ok(a)
+    let items = tab.find_elements("#container > .eplxSlide")?;
+
+    for item in items.iter().skip(4) {
+        let html = item
+            .call_js_fn("function() { return this.innerHTML;}", false)?
+            .value
+            .expect("Can't get innerHTML on div");
+
+        let attributes = item.get_attributes()?.expect("No attributes");
+        let popup = attributes
+            .get("class")
+            .expect("No classes in page div")
+            .contains("popupImpl");
+        let fragment = Html::parse_fragment(html.as_str().expect("Can't parse HTML"));
+        parse_fragment(fragment, popup);
+    }
+
+    Ok(Chapter {
+        title: "".to_string(),
+        exercises: Vec::new(),
+    })
+}
+
+fn parse_fragment(fragment: Html, popup: bool) -> Exercise {
+    let selector = if popup {
+        Selector::parse("div.popupContent").expect("Can't parse popup selector")
+    } else {
+        Selector::parse("p.subheading, div.content.interactive-area").expect("Can't parse selector")
+    };
+
+    for element in fragment.select(&selector) {
+        println!("{}", element.inner_html());
+    }
+
+    Exercise {
+        content: Vec::new(),
+        num_popups: 0,
+    }
 }
